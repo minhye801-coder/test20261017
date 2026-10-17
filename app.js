@@ -57,7 +57,7 @@ function draw() {
  const font = g <= 2 ? 36 : g <= 4 ? 33 : 30;
  ctx.clearRect(0,0,1600,900); ctx.fillStyle='#fffdf3';ctx.fillRect(0,0,1600,900);
  rounded(35,25,1530,215,28,'#e5efd7'); ctx.textBaseline='top';
- ctx.fillStyle='#4f7548';ctx.font='600 25px system-ui, sans-serif';ctx.fillText('구미봉곡초등학교 · 냠냠! 급식 탐험대',60,32);
+ ctx.fillStyle='#4f7548';ctx.font='600 25px system-ui, sans-serif';block(schoolName()+' · 냠냠! 급식 탐험대',60,32,1480,38,25,'#4f7548');
  block(ready ? s.selected : '오늘은 어떤 음식을 만날까요?',60,85,1480,85,60,'#2d573c');
  ctx.fillStyle='#5e7751';ctx.font='500 27px system-ui, sans-serif';
  ctx.fillText(ready ? `${s.date.replaceAll('-','.')}  |  ${g}학년` : '왼쪽에서 날짜와 메뉴를 입력하고 작성을 시작하세요.',60,180);
@@ -113,7 +113,6 @@ $('applyExample').onclick=()=>{
  ['nutrient','amount','basis','source'].forEach(id=>$(id).value='');$('verified').checked=false;$('reviewed').checked=false;dirty=true;draw();message('예시를 적용했습니다. 메뉴와 내용이 어울리는지 직접 확인해 주세요.',true);
 };
 function download(blob,name) {const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);}
-$('saveJson').onclick=()=>{if(!valid())return;download(new Blob([JSON.stringify({version:1,data:state()},null,2)],{type:'application/json'}),`nutrition-${$('date').value}.json`);message('JSON 파일을 내려받았습니다. 실제 다운로드 완료를 확인하세요. 이후 수정 내용은 다시 저장해야 합니다.',true);};
 $('loadJson').onclick=()=>$('file').click();
 function parseDocument(raw) {
  if(!raw || raw.version!==1 || !raw.data || typeof raw.data!=='object' || Array.isArray(raw.data))throw Error('지원하지 않는 JSON 형식입니다.');
@@ -128,9 +127,6 @@ function parseDocument(raw) {
  if(/\d/.test(d.nutrition))throw Error('영양 정보의 수치는 검증 자료 항목에 입력해야 합니다.');
  return d;
 }
-$('file').onchange=async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;try{if(file.size>100000)throw Error('파일 크기는 100KB 이하여야 합니다.');const d=parseDocument(JSON.parse(await file.text()));if(dirty&&!confirm('현재 내용을 불러온 자료로 교체할까요? 보관하려면 먼저 JSON을 저장하세요.'))return;
- ids.filter(id=>id!=='selected').forEach(id=>{if($(id).type==='checkbox')$(id).checked=d[id];else $(id).value=d[id];});syncMenus();$('selected').value=d.selected;started=true;$('content').disabled=false;dirty=true;showAnswer=false;gradeInfo();draw();message('자료를 복원했습니다. 사용 전 내용을 다시 살펴보세요.',true);
- }catch(err){message('불러오기 실패: '+err.message+' 기존 작성 내용은 유지됩니다.');}};
 $('toggleAnswer').onclick=()=>{showAnswer=!showAnswer;draw();};
 $('saveImage').onclick=()=>{if(!valid(true))return;draw();canvas.toBlob(blob=>{if(!blob)return error('이미지를 만들지 못했습니다. 다시 시도해 주세요.');download(blob,`nutrition-${$('date').value}.png`);message('미리보기와 동일한 PNG를 내려받았습니다.',true);},'image/png');};
 $('print').onclick=()=>{if(!valid(true))return;draw();const image=new Image();image.alt='영양교육 자료';image.onload=()=>{ $('printArea').replaceChildren(image);window.print();};image.src=canvas.toDataURL('image/png');};
@@ -142,6 +138,10 @@ window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.return
 const contentKeys = ['story','nutrition','nutrient','amount','unit','basis','source','verified','question','option0','option1','option2','option3','answer','reviewed'];
 let menuDrafts = Object.create(null), editingMenu = '', mealOrigin = 'demo', activeFood = '', activeTab = 'story', quizChoice = null;
 let officialAllergens = Object.create(null), mealRequest = 0;
+let selectedSchool = null, schoolSearchRequest = 0, schoolSearchController = null;
+function schoolName(){return selectedSchool?.name || '우리 학교';}
+function schoolIdentity(school){return school ? school.officeCode+':'+school.code : '';}
+function updateSchoolLabels(){ $('brandSchool').textContent=schoolName()+' · 맛있는 배움';$('stageSchool').textContent='🏫 '+schoolName();$('schoolLabel').textContent=selectedSchool ? '🏫 '+selectedSchool.name+' · '+selectedSchool.officeName : '🏫 선택한 학교 없음';}
 function node(tag, className, text) {const el=document.createElement(tag);if(className)el.className=className;if(text!==undefined)el.textContent=text;return el;}
 function action(text, className, callback) {const b=node('button',className,text);b.type='button';b.onclick=callback;return b;}
 const artParts = {
@@ -222,44 +222,69 @@ function menuDetail(preview = false) {
  }
  detail.append(top,title,tabs,card);return detail;
 }
-function renderStudent(){if(!menuList().includes(activeFood))activeFood='';for(const id of ['studentPreview','stageContent']){const host=$(id);if(host)host.replaceChildren(activeFood?menuDetail(id==='studentPreview'):menuHome());}$('studentStage').classList.toggle('grade-small',+$('grade').value<=2);}
+function renderStudent(){updateSchoolLabels();if(!menuList().includes(activeFood))activeFood='';for(const id of ['studentPreview','stageContent']){const host=$(id);if(host)host.replaceChildren(activeFood?menuDetail(id==='studentPreview'):menuHome());}$('studentStage').classList.toggle('grade-small',+$('grade').value<=2);}
 async function enterStandby(){saveMenuDraft();activeFood='';activeTab='story';quizChoice=null;renderStudent();$('studentStage').hidden=false;document.body.classList.add('in-standby');$('stageHome').focus();try{if($('studentStage').requestFullscreen)await $('studentStage').requestFullscreen();}catch(_){/* Touch mode remains usable when fullscreen is unavailable. */}}
 $('standby').onclick=enterStandby;
 $('stageHome').onclick=()=>{activeFood='';quizChoice=null;renderStudent();$('studentStage').scrollTop=0;};
 $('stageFullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if($('studentStage').requestFullscreen)await $('studentStage').requestFullscreen();else alert('이 브라우저는 전체화면을 지원하지 않지만 터치 화면은 그대로 사용할 수 있어요.');}catch(_){alert('브라우저의 전체화면 허용 설정을 확인해 주세요.');}};
 $('leaveStandby').onclick=async()=>{if(document.fullscreenElement)try{await document.exitFullscreen();}catch(_){}$('studentStage').hidden=true;document.body.classList.remove('in-standby');$('standby').focus();};
 function todaySeoul(){const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());return ['year','month','day'].map(t=>parts.find(x=>x.type===t).value).join('-');}
-function useDemo(){if(dirty&&!confirm('현재 메뉴를 체험 메뉴로 바꿀까요? 보관하려면 먼저 JSON을 저장하세요.'))return;menuDrafts=Object.create(null);officialAllergens=Object.create(null);mealOrigin='demo';$('menus').value='현미밥\n두부된장국\n도라지초무침\n닭살채소볶음\n배추김치\n사과';syncMenus();$('selected').value='현미밥';selectEditorMenu('현미밥');$('mealStatus').textContent='체험 메뉴입니다. 구미봉곡초등학교의 실제 급식이 아닙니다. 날짜를 선택하고 공식 급식을 불러오세요.';activeFood='';draw();}
+function useDemo(){if(dirty&&!confirm('현재 메뉴를 체험 메뉴로 바꿀까요? 보관하려면 먼저 JSON을 저장하세요.'))return;menuDrafts=Object.create(null);officialAllergens=Object.create(null);mealOrigin='demo';$('menus').value='현미밥\n두부된장국\n도라지초무침\n닭살채소볶음\n배추김치\n사과';syncMenus();$('selected').value='현미밥';selectEditorMenu('현미밥');$('mealStatus').textContent='체험 메뉴입니다. 실제 학교 급식이 아닙니다. 학교를 검색·선택하고 날짜에 맞는 공식 급식을 불러오세요.';activeFood='';draw();}
 $('demoMeals').onclick=()=>{useDemo();dirty=true;};
 async function neis(endpoint,params,signal){const url=new URL('https://open.neis.go.kr/hub/'+endpoint);url.search=new URLSearchParams({Type:'json',pIndex:'1',pSize:'100',...params});const response=await fetch(url,{signal,credentials:'omit',referrerPolicy:'no-referrer'});if(!response.ok)throw Error('급식 서비스가 응답하지 않습니다.');const json=await response.json();const table=json[endpoint];if(!Array.isArray(table)){const code=json.RESULT?.CODE;if(code==='INFO-200')return [];throw Error('급식 서비스 접근이 제한되었거나 응답 형식이 다릅니다.');}const head=table.find(x=>x.head)?.head;const result=head?.find(x=>x.RESULT)?.RESULT;if(result&&result.CODE!=='INFO-000')throw Error(result.MESSAGE||'급식 조회 오류');return table.find(x=>Array.isArray(x.row))?.row||[];}
 function cleanDish(raw){return raw.replace(/<br\s*\/?\s*>/gi,'\n').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&nbsp;/g,' ').trim();}
-$('fetchMeals').onclick=async()=>{
- if(!$('date').value||!$('date').validity.valid)return error('급식 날짜를 먼저 선택해 주세요.','date');
- const date=$('date').value, token=++mealRequest,button=$('fetchMeals'),controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),15000);button.disabled=true;button.textContent='급식 찾는 중…';$('mealStatus').textContent='나이스에서 구미봉곡초등학교를 찾고 있어요.';
+function normalizeSchool(row){
+ const fields={name:row.SCHUL_NM,officeName:row.ATPT_OFCDC_SC_NM,officeCode:row.ATPT_OFCDC_SC_CODE,code:row.SD_SCHUL_CODE,address:row.ORG_RDNMA||row.ORG_RDNZC||'',type:row.SCHUL_KND_SC_NM||''};
+ if(typeof fields.name!=='string'||!fields.name.trim()||fields.name.length>80||typeof fields.officeName!=='string'||!fields.officeName.trim()||fields.officeName.length>80||!['officeCode','code'].every(k=>typeof fields[k]==='string'&&/^[A-Za-z0-9_-]{1,30}$/.test(fields[k]))||typeof fields.address!=='string'||fields.address.length>200||typeof fields.type!=='string'||fields.type.length>30)return null;
+ return fields;
+}
+function clearSchoolMeals(){
+ mealRequest++;menuDrafts=Object.create(null);officialAllergens=Object.create(null);mealOrigin='manual';editingMenu='';activeFood='';quizChoice=null;$('menus').value='';syncMenus();contentKeys.forEach(id=>{if($(id).type==='checkbox')$(id).checked=false;else $(id).value=id==='unit'?'g':'';});started=false;$('content').disabled=true;
+}
+function chooseSchool(school){
+ if(schoolIdentity(school)===schoolIdentity(selectedSchool)){ $('schoolSearchStatus').textContent='이미 선택한 학교입니다.';return; }
+ if(dirty&&!confirm('학교를 변경하면 현재 식단과 교육자료가 초기화됩니다. 필요한 자료를 JSON으로 저장하셨나요?'))return;
+ clearSchoolMeals();selectedSchool=school;dirty=true;$('schoolResults').replaceChildren();$('schoolSearchStatus').textContent=school.name+' 선택 완료 · '+(school.address||school.officeName);$('mealStatus').textContent='선택한 학교의 급식 날짜를 확인한 뒤 식단을 불러오세요. 기존 학교의 식단은 초기화했습니다.';draw();message('학교를 선택했습니다. 선택 날짜 급식 불러오기를 눌러 주세요.',true);
+}
+$('schoolQuery').addEventListener('input',()=>{schoolSearchRequest++;schoolSearchController?.abort();$('searchSchools').disabled=false;$('searchSchools').textContent='검색';$('schoolResults').replaceChildren();$('schoolSearchStatus').textContent='검색어를 입력한 뒤 검색을 눌러 주세요. 현재 선택한 학교는 바뀌지 않습니다.';});
+$('schoolQuery').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();$('searchSchools').click();}});
+$('searchSchools').onclick=async()=>{
+ const query=$('schoolQuery').value.trim();if(query.length<2){$('schoolSearchStatus').textContent='학교명을 두 글자 이상 입력해 주세요.';$('schoolQuery').focus();return;}
+ const token=++schoolSearchRequest;schoolSearchController?.abort();const controller=new AbortController();schoolSearchController=controller;const timeout=setTimeout(()=>controller.abort(),15000);$('searchSchools').disabled=true;$('searchSchools').textContent='찾는 중…';$('schoolResults').replaceChildren();$('schoolSearchStatus').textContent='나이스에서 학교를 찾고 있어요.';
  try{
- const schools=await neis('schoolInfo',{SCHUL_NM:'구미봉곡초등학교'},controller.signal);
- const candidates=schools.filter(x=>x.SCHUL_NM==='구미봉곡초등학교'&&x.ATPT_OFCDC_SC_NM==='경상북도교육청'&&String(x.ORG_RDNMA||'').includes('구미'));
- if(candidates.length!==1)throw Error('공식 데이터에서 학교를 정확히 확인하지 못했습니다. 다른 학교의 메뉴를 대신 표시하지 않습니다.');
- const school=candidates[0],ymd=date.replaceAll('-','');
- const rows=await neis('mealServiceDietInfo',{ATPT_OFCDC_SC_CODE:school.ATPT_OFCDC_SC_CODE,SD_SCHUL_CODE:school.SD_SCHUL_CODE,MLSV_YMD:ymd,MMEAL_SC_CODE:'2'},controller.signal);
- const matches=rows.filter(x=>x.SCHUL_NM==='구미봉곡초등학교'&&x.MLSV_YMD===ymd&&String(x.MMEAL_SC_CODE)==='2'&&String(x.SD_SCHUL_CODE)===String(school.SD_SCHUL_CODE));
- if(!matches.length)throw Error('선택한 날짜의 중식 정보가 없습니다. 주말·공휴일이거나 아직 등록되지 않았을 수 있어요. 기존 메뉴는 유지합니다.');
+ const rows=await neis('schoolInfo',{SCHUL_NM:query},controller.signal);if(token!==schoolSearchRequest)return;
+ const seen=new Set(),schools=rows.map(normalizeSchool).filter(s=>{if(!s||!s.name.includes(query)||seen.has(schoolIdentity(s)))return false;seen.add(schoolIdentity(s));return true;});
+ if(!schools.length){$('schoolSearchStatus').textContent='검색 결과가 없습니다. 학교명을 확인하거나 지역을 제외한 이름으로 검색해 주세요. 현재 학교와 식단은 유지합니다.';return;}
+ $('schoolSearchStatus').textContent=schools.length+'개 학교를 찾았습니다. 지역·주소를 확인하고 선택하세요.'+(schools.length>=100?' 결과가 많으니 더 구체적인 학교명을 입력해 주세요.':'');
+ for(const school of schools){const button=action('','school-result',()=>chooseSchool(school));button.append(node('strong','',school.name),node('span','',school.officeName+(school.type?' · '+school.type:'')),node('small','',school.address||'주소 정보 없음'));$('schoolResults').append(button);}
+ }catch(e){if(token===schoolSearchRequest)$('schoolSearchStatus').textContent=e.name==='AbortError'?'학교 검색 시간이 초과되었습니다. 다시 시도해 주세요.':'학교 검색 실패: '+(e instanceof TypeError?'네트워크 또는 나이스 접속을 확인해 주세요.':e.message)+' 현재 학교와 식단은 유지됩니다.';}
+ finally{clearTimeout(timeout);if(token===schoolSearchRequest){$('searchSchools').disabled=false;$('searchSchools').textContent='검색';}}
+};
+$('fetchMeals').onclick=async()=>{
+ if(!selectedSchool)return error('학교명을 검색하고 검색 결과에서 학교를 먼저 선택해 주세요.','schoolQuery');
+ if(!$('date').value||!$('date').validity.valid)return error('급식 날짜를 먼저 선택해 주세요.','date');
+ const school={...selectedSchool},identity=schoolIdentity(school),date=$('date').value,token=++mealRequest,button=$('fetchMeals'),controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),15000);button.disabled=true;button.textContent='급식 찾는 중…';$('mealStatus').textContent=school.name+'의 중식 정보를 찾고 있어요.';
+ try{
+ const ymd=date.replaceAll('-','');
+ const rows=await neis('mealServiceDietInfo',{ATPT_OFCDC_SC_CODE:school.officeCode,SD_SCHUL_CODE:school.code,MLSV_YMD:ymd,MMEAL_SC_CODE:'2'},controller.signal);
+ const matches=rows.filter(x=>x.SCHUL_NM===school.name&&x.MLSV_YMD===ymd&&String(x.MMEAL_SC_CODE)==='2'&&String(x.SD_SCHUL_CODE)===school.code&&x.ATPT_OFCDC_SC_CODE===school.officeCode);
+ if(!matches.length)throw Error('선택한 날짜·학교의 중식 정보가 없습니다. 주말·공휴일이거나 아직 등록되지 않았을 수 있어요. 기존 메뉴는 유지합니다.');
  const raw=cleanDish(matches.map(x=>x.DDISH_NM||'').join('\n')).split('\n').map(x=>x.trim()).filter(Boolean),allergies=Object.create(null);
  const names=[...new Set(raw.map(x=>{const name=x.replace(/\s*\([\d.\s]+\)/g,'').replace(/^[*•\s]+/,'').trim();allergies[name]=x;return name;}))];
  if(!names.length||names.some(x=>x.length>45)||names.join('\n').length>700)throw Error('식단 형식을 확인할 수 없습니다. 학교 안내와 대조해 직접 입력해 주세요.');
- if(token!==mealRequest||$('date').value!==date)throw Error('선택 날짜가 바뀌었습니다. 다시 불러와 주세요.');
- if(dirty&&!confirm('현재 메뉴와 메뉴별 편집 내용을 공식 식단으로 바꿀까요? 필요하면 먼저 JSON을 저장하세요.')){$('mealStatus').textContent='불러오기를 취소했습니다. 기존 메뉴를 유지합니다.';return;}
- menuDrafts=Object.create(null);officialAllergens=allergies;mealOrigin='official';$('menus').value=names.join('\n');syncMenus();$('selected').value=names[0];selectEditorMenu(names[0]);activeFood='';dirty=true;draw();$('mealStatus').textContent=`${date} 구미봉곡초등학교 중식 ${names.length}개 메뉴를 나이스에서 불러왔습니다. 학교 안내와 최종 대조해 주세요.`;
- }catch(e){$('mealStatus').textContent=e.name==='AbortError'?'급식 조회 시간이 초과되었습니다. 기존 메뉴를 유지합니다. 직접 입력하거나 다시 시도해 주세요.':'불러오기 실패: '+(e instanceof TypeError?'네트워크·학교 API 연결을 확인해 주세요. 기존 메뉴를 유지합니다.':e.message);}
+ if(token!==mealRequest||$('date').value!==date||schoolIdentity(selectedSchool)!==identity)return;
+ if(dirty&&!confirm('현재 메뉴와 메뉴별 편집 내용을 선택 학교의 공식 식단으로 바꿀까요? 필요하면 먼저 JSON을 저장하세요.')){$('mealStatus').textContent='불러오기를 취소했습니다. 기존 메뉴를 유지합니다.';return;}
+ menuDrafts=Object.create(null);officialAllergens=allergies;mealOrigin='official';$('menus').value=names.join('\n');syncMenus();$('selected').value=names[0];selectEditorMenu(names[0]);activeFood='';dirty=true;draw();$('mealStatus').textContent=date+' '+school.name+' 중식 '+names.length+'개 메뉴를 나이스에서 불러왔습니다. 학교 안내와 최종 대조해 주세요.';
+ }catch(e){if(token===mealRequest&&schoolIdentity(selectedSchool)===identity&&$('date').value===date)$('mealStatus').textContent=e.name==='AbortError'?'급식 조회 시간이 초과되었습니다. 기존 메뉴를 유지합니다. 직접 입력하거나 다시 시도해 주세요.':'불러오기 실패: '+(e instanceof TypeError?'네트워크·학교 API 연결을 확인해 주세요. 기존 메뉴를 유지합니다.':e.message);}
  finally{clearTimeout(timeout);button.disabled=false;button.textContent='↻ 선택 날짜 급식 불러오기';}
 };
 // Version 2 includes the per-menu drafts. Version 1 files remain supported.
-$('saveJson').onclick=()=>{if(!valid())return;saveMenuDraft();const data=state(),drafts=Object.fromEntries(menuList().filter(name=>menuDrafts[name]).map(name=>[name,menuDrafts[name]]));try{for(const [name,draft] of Object.entries(drafts))parseDocument({version:1,data:{...data,...draft,selected:name}});}catch(e){return error('메뉴별 자료를 확인해 주세요. '+e.message+' 메뉴를 선택해 수정한 뒤 저장하세요.','selected');}download(new Blob([JSON.stringify({version:2,data,drafts},null,2)],{type:'application/json'}),`nutrition-${data.date}.json`);message('메뉴별 자료를 JSON으로 내려받았습니다. 파일의 다운로드 완료를 확인하세요.',true);};
+$('saveJson').onclick=()=>{if(!valid())return;saveMenuDraft();const data=state(),drafts=Object.fromEntries(menuList().filter(name=>menuDrafts[name]).map(name=>[name,menuDrafts[name]]));try{for(const [name,draft] of Object.entries(drafts))parseDocument({version:1,data:{...data,...draft,selected:name}});}catch(e){return error('메뉴별 자료를 확인해 주세요. '+e.message+' 메뉴를 선택해 수정한 뒤 저장하세요.','selected');}download(new Blob([JSON.stringify({version:2,data,drafts,school:selectedSchool},null,2)],{type:'application/json'}),`nutrition-${data.date}.json`);message('메뉴별 자료를 JSON으로 내려받았습니다. 파일의 다운로드 완료를 확인하세요.',true);};
 $('file').onchange=async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;try{
- if(file.size>100000)throw Error('파일 크기는 100KB 이하여야 합니다.');const raw=JSON.parse(await file.text());if(![1,2].includes(raw?.version))throw Error('지원하지 않는 JSON 버전입니다.');const d=parseDocument({version:1,data:raw.data}),drafts=Object.create(null);
+ if(file.size>100000)throw Error('파일 크기는 100KB 이하여야 합니다.');const raw=JSON.parse(await file.text());if(![1,2].includes(raw?.version))throw Error('지원하지 않는 JSON 버전입니다.');const d=parseDocument({version:1,data:raw.data}),drafts=Object.create(null);let importedSchool=null;if(raw.school!=null){const t=raw.school;importedSchool=normalizeSchool({SCHUL_NM:t.name,ATPT_OFCDC_SC_NM:t.officeName,ATPT_OFCDC_SC_CODE:t.officeCode,SD_SCHUL_CODE:t.code,ORG_RDNMA:t.address,SCHUL_KND_SC_NM:t.type});if(!importedSchool)throw Error('학교 정보 형식이 잘못되었습니다.');}
  if(raw.version===2){if(!raw.drafts||typeof raw.drafts!=='object'||Array.isArray(raw.drafts))throw Error('메뉴별 자료 형식이 잘못되었습니다.');for(const [name,entry] of Object.entries(raw.drafts)){if(!d.menus.split('\n').map(x=>x.trim()).includes(name)||!entry||typeof entry!=='object'||Array.isArray(entry))throw Error('메뉴별 자료가 식단과 맞지 않습니다.');const checked=parseDocument({version:1,data:{...d,...entry,selected:name}});drafts[name]=Object.fromEntries(contentKeys.map(k=>[k,checked[k]]));}}
  if(dirty&&!confirm('현재 내용을 불러온 자료로 교체할까요? 보관하려면 먼저 JSON을 저장하세요.'))return;
- ids.filter(id=>id!=='selected').forEach(id=>{if($(id).type==='checkbox')$(id).checked=d[id];else $(id).value=d[id];});syncMenus();$('selected').value=d.selected;menuDrafts=drafts;editingMenu=d.selected;saveMenuDraft();mealOrigin='manual';officialAllergens=Object.create(null);started=true;$('content').disabled=false;dirty=true;showAnswer=false;activeFood='';quizChoice=null;gradeInfo();draw();$('mealStatus').textContent='JSON에서 복원한 메뉴입니다. 실제 학교 식단과 확인하세요.';message('메뉴별 자료를 복원했습니다. 사용 전 내용을 다시 확인하세요.',true);
+ ids.filter(id=>id!=='selected').forEach(id=>{if($(id).type==='checkbox')$(id).checked=d[id];else $(id).value=d[id];});syncMenus();$('selected').value=d.selected;selectedSchool=importedSchool;mealRequest++;menuDrafts=drafts;editingMenu=d.selected;saveMenuDraft();mealOrigin='manual';officialAllergens=Object.create(null);started=true;$('content').disabled=false;dirty=true;showAnswer=false;activeFood='';quizChoice=null;gradeInfo();draw();$('mealStatus').textContent='JSON에서 복원한 메뉴입니다. 실제 학교 식단과 확인하세요.';message('메뉴별 자료를 복원했습니다. 사용 전 내용을 다시 확인하세요.',true);
  }catch(err){message('불러오기 실패: '+err.message+' 기존 작성 내용은 유지됩니다.');}};
 $('date').addEventListener('input',()=>{if(mealOrigin==='official'){mealOrigin='manual';$('mealStatus').textContent='날짜가 바뀌었습니다. 해당 날짜의 급식을 다시 불러오세요.';renderStudent();}});
 $('date').value=todaySeoul();gradeInfo();useDemo();dirty=false;
